@@ -1,12 +1,16 @@
 #pragma once
 #include <pthread.h>
+#include <map>
+
 
 class CLTable
 {
 public:
+    int SaveIndex(int attibute);
     static CLTable *GetInstance();
     static int WriteRowMsg(const int64_t *pstrMsg);
     static int ReadRowMsg();
+
     // int64_t *m_pReader;
     // int64_t m_nReaderRows;
     static int64_t **SearchFromTable(int attribute, int64_t low, int64_t high);
@@ -15,6 +19,8 @@ private:
     static void OnProcessExit();
     int64_t *m_pReader;
     static pthread_mutex_t *InitializeMutex();
+    std::map<int64_t, int64_t> RowsHash;
+
 
 private:
     CLTable(const CLTable&);
@@ -23,8 +29,9 @@ private:
     int WriteRow(const int64_t *pstrMsg);
     int ReadRow();
     int Flush();
+    int ReadIndex(int attribute);
     int64_t** Search(int attribute, int64_t low, int64_t high);
-
+    int64_t **SearchWithIndex(int attribute, int64_t low, int64_t high);
     CLTable();
     ~CLTable();
 
@@ -45,5 +52,6 @@ private:
 
 private:
     bool m_bFlagForProcessExit;
+    
 
 };
