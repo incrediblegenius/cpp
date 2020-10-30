@@ -8,14 +8,12 @@
 #include <algorithm>
 #include <random>
 #include <functional>
-#include <queue>
-#include <hash_map>
+
 
 #define TABLE_FILE_NAME "CLTable"
-
-// #define BUFFER_SIZE_TABLE_FILE 4096
 #define ROW_LENGTH (100 * sizeof(int64_t))
 #define BUFFER_ROW 500
+#define NUM_THREADS 5
 
 CLTable *CLTable::m_pTable = 0;
 pthread_mutex_t *CLTable::m_pMutexForCreatator = CLTable::InitializeMutex();
@@ -144,11 +142,13 @@ int64_t **CLTable::Search(int attribute, int64_t low, int64_t high)
             // std::cout << "m_pReader[0] = " << (m_pReader==0?0:1) << std::endl;
             if (tmp[attribute] >= low && tmp[attribute] <= high)
             {
-                std::cout << "success searched!" << m_nReaderRows << std::endl;
+                if(cnt ==0){
+                std::cout << "Normal search success!" << std::endl;
+            }
                 res[cnt] = (int64_t *)malloc(ROW_LENGTH);
                 memcpy(res[cnt], tmp, ROW_LENGTH);
                 cnt++;
-                std::cout << "cnt=" << cnt << std::endl;
+                
                 if (cnt == 10)
                     break;
             }
@@ -170,7 +170,8 @@ int64_t **CLTable::Search(int attribute, int64_t low, int64_t high)
                 }
             }
         }
-        // std::cout << "end m_nUsedRowsForBuffer" << std::endl;
+
+        std::cout << "cnt = "<<cnt << std::endl;
         throw 0;
     }
     catch (...)
@@ -201,12 +202,14 @@ int64_t **CLTable::SearchWithIndex(int attribute, int64_t low, int64_t high)
         // std::cout << itto->second << std::endl;
         for (std::map<int64_t, int64_t>::iterator it = itfrom; it != itto; ++it)
         {
-            std::cout << "Index search success!" << cnt << std::endl;
+            if(cnt ==0){
+                std::cout << "Index search success!" << std::endl;
+            }
             int64_t *tmp = m_pReader + it->second * 100;
             res[cnt] = (int64_t *)malloc(ROW_LENGTH); //输出范围内的有数据
             memcpy(res[cnt], tmp, ROW_LENGTH);
             cnt++;
-            std::cout << "cnt=" << cnt << std::endl;
+            // std::cout << "cnt=" << cnt << std::endl;
             if (cnt == 10)
                 break;
         }
@@ -216,7 +219,7 @@ int64_t **CLTable::SearchWithIndex(int attribute, int64_t low, int64_t high)
     {
         if (pthread_mutex_unlock(m_pMutexForWritingTable) != 0)
             return 0;
-        std::cout << "Index Unlock mutex" << std::endl;
+        std::cout <<"cnt = "<<cnt<<std::endl<< "Index Unlock mutex" << std::endl;
     }
     return res;
 }
@@ -263,9 +266,9 @@ int CLTable::WriteRow(const int64_t *pstrMsg)
         }
         catch (int &s)
         {
-            CLTable::Flush();
             if (pthread_mutex_unlock(m_pMutexForWritingTable) != 0)
                 return -1;
+            CLTable::Flush();
             return 0;
         }
     }
@@ -317,24 +320,28 @@ int CLTable::ReadRow()
 
 CLTable *CLTable::GetInstance()
 {
-    if (m_pTable != 0)
+    if (m_pTable != 0){
+        // std::cout<<"test"<<std::endl;
         return m_pTable;
+    }
+        
+    // if (m_pMutexForCreatator == 0)
+    //     return 0;
 
-    if (m_pMutexForCreatator == 0)
-        return 0;
 
-    if (pthread_mutex_lock(m_pMutexForCreatator) != 0)
-        return 0;
+    pthread_mutex_lock(m_pMutexForCreatator);
+    std::cout << "m_pMutexForCreatator locked!" <<std::endl;
 
     if (m_pTable == 0)
     {
         try
         {
-            m_pTable = new CLTable;
+            m_pTable = new CLTable();
         }
         catch (const char *)
         {
             pthread_mutex_unlock(m_pMutexForCreatator);
+            std::cout<<"unlocked and 0"<<std::endl;
             return 0;
         }
 
@@ -342,19 +349,20 @@ CLTable *CLTable::GetInstance()
         {
             m_pTable->m_bFlagForProcessExit = true;
 
-            if (pthread_mutex_unlock(m_pMutexForCreatator) != 0)
+            if (pthread_mutex_unlock(m_pMutexForCreatator) != 0){
+                std::cout << "unlocked and 1" << std::endl;
                 return 0;
+            }
         }
         else
         {
-            if (pthread_mutex_unlock(m_pMutexForCreatator) != 0)
-                return 0;
+            pthread_mutex_unlock(m_pMutexForCreatator);
+            std::cout << "unlocked and 2" << std::endl;
         }
         return m_pTable;
     }
-    if (pthread_mutex_unlock(m_pMutexForCreatator) != 0)
-        return 0;
-
+    pthread_mutex_unlock(m_pMutexForCreatator);
+    std::cout << "m_pMutexForCreatator unlocked!" << std::endl;
     return m_pTable;
 }
 
@@ -388,6 +396,10 @@ int CLTable::SaveIndex(int attribute)
 {
     std::string s = "Index" + std::to_string(attribute);
     int fd = open(s.data(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
+    if(lseek(fd,0,SEEK_END)/sizeof(int64_t) == m_nReaderRows*ROW_LENGTH){
+        close(fd);
+        return 0;
+    }
     int64_t *tmp = (int64_t *)malloc(sizeof(int64_t) * 2 * m_nReaderRows);
     int cnt = 0;
     for (int64_t i = 0; i < m_nReaderRows; i++)
@@ -430,35 +442,105 @@ int CLTable::ReadIndex(int attribute)
     return 1;
 }
 
-int main()
-{
+
+//多线程函数，随机完成多种任务
+//insert -> search -> saveindex 
+void * InsertSearchIndex(void* args){
     std::default_random_engine generator(time(NULL));
-    std::uniform_int_distribution<int64_t> dis(0, 18446744073709551615);
+    std::uniform_int_distribution<int> dis(0, 12);
     auto dice = std::bind(dis, generator);
+
+
     CLTable *pTable = CLTable::GetInstance();
-    for (int64_t i = 0; i < 10000; i++)
+
+    for (int64_t i = 0; i <10; i++)
     {
         int64_t tmp[100];
         for (int i = 0; i < 100; i++)
         {
             tmp[i] = abs(dice());
         }
-        // std::cout << tmp[0] <<"    "<<tmp[99] << std::endl;
+        std::cout << "Writing table"<< std::endl;
         pTable->WriteRowMsg(tmp);
     }
-    int64_t a = abs(dice());
-    std::cout << "a = " << a << std::endl;
-    int64_t **res = pTable->SearchFromTable(50, 1, a + 1000000);
-    for (int i = 0; i < 10; i++)
-    {
-        if (res == 0 || res[i] == 0)
+    for(int i= 0;i<10;i++){
+        int64_t a = abs(dice());
+        std::cout << "a = " << a << std::endl;
+        std::cout << "Searching table" << std::endl;
+        int64_t **res = pTable->SearchFromTable(67, 1, a);
+        for (int i = 0; i < 10; i++)
         {
-            std::cout << "There are(is) " << i << " searched data in table!" << std::endl;
-            break;
+            if (res == 0 || res[i] == 0)
+            {
+                std::cout << "There are(is) " << i << " searched data in table!" << std::endl;
+                break;
+            }
+            std::cout << "res[" << i << "][0] =  " << res[i][0]  << "      "
+                      << "res[" << i << "][0] =  " << res[i][50] << "      "
+                      << "res[" << i << "][0] =  " << res[i][99] << std::endl;
         }
-        std::cout << res[i][50] << "     " << res[i][99] << "       " << std::endl;
     }
+    std::cout << "Saving Index" << std::endl;
+    pTable->SaveIndex(dice()+20);
 
-    pTable->SaveIndex(50);
+}
+
+
+
+
+
+
+int main()
+{
+    pthread_t tids[NUM_THREADS];
+    for (int i = 0; i < NUM_THREADS; ++i)
+    {
+        //参数依次是：创建的线程id，线程参数，调用的函数，传入的函数参数
+        int ret = pthread_create(&tids[i], NULL, InsertSearchIndex, NULL);
+        if (ret != 0)
+        {
+            std::cout << "pthread_create error: error_code=" << ret << std::endl;
+        }
+        else{
+            std::cout << "pthread has been created, and tid = " << tids[i] << std::endl;
+        }
+        sleep(3);
+    }
+    //等各个线程退出后，进程才结束，否则进程强制结束了，线程可能还没反应过来；
+    pthread_exit(NULL);
+
+
+    // std::default_random_engine generator(time(NULL));
+    // std::uniform_int_distribution<int64_t> dis(0, 18446744073709551615);
+    // auto dice = std::bind(dis, generator);
+    // CLTable *pTable = CLTable::GetInstance();
+    // for (int64_t i = 0; i < 10000; i++)
+    // {
+    //     int64_t tmp[100];
+    //     for (int i = 0; i < 100; i++)
+    //     {
+    //         tmp[i] = abs(dice());
+    //     }
+    //     // std::cout << tmp[0] <<"    "<<tmp[99] << std::endl;
+    //     pTable->WriteRowMsg(tmp);
+    // }
+    // int64_t a = abs(dice());
+    // std::cout << "a = " << a << std::endl;
+    // int64_t **res = pTable->SearchFromTable(50, 1, a + 1000000);
+    // for (int i = 0; i < 10; i++)
+    // {
+    //     if (res == 0 || res[i] == 0)
+    //     {
+    //         std::cout << "There are(is) " << i << " searched data in table!" << std::endl;
+    //         break;
+    //     }
+    //     std::cout << "res[" << i << "][0] =  " << res[i][0]  << "      "
+    //               << "res[" << i << "][0] =  " << res[i][50] << "      "
+    //               << "res[" << i << "][0] =  " << res[i][99] << std::endl;
+    // }
+
+    // pTable->SaveIndex(50);
     return 0;
 }
+
+
