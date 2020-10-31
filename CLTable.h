@@ -9,8 +9,6 @@ public:
     static CLTable *GetInstance();
     static int WriteRowMsg(const int64_t *pstrMsg);
     static int ReadRowMsg();
-
-
     static int64_t **SearchFromTable(int attribute, int64_t low, int64_t high);
 
 private:
@@ -22,6 +20,8 @@ private:
 private:
     CLTable(const CLTable &);
     CLTable &operator=(const CLTable &);
+    CLTable();
+    ~CLTable();
 
     int WriteRow(const int64_t *pstrMsg);
     int ReadRow();
@@ -29,15 +29,12 @@ private:
     int ReadIndex(int attribute);
     int64_t **Search(int attribute, int64_t low, int64_t high);
     int64_t **SearchWithIndex(int attribute, int64_t low, int64_t high);
-    CLTable();
-    ~CLTable();
 
 private:
     int m_Fd;
     int64_t m_nRows;
     int64_t m_nReaderRows;
     pthread_mutex_t *m_pMutexForWritingTable;
-    // int m_nReaders;
     static CLTable *m_pTable;
     static pthread_mutex_t *m_pMutexForCreatator;
 

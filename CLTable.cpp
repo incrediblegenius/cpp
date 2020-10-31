@@ -13,7 +13,7 @@
 #define TABLE_FILE_NAME "CLTable"
 #define ROW_LENGTH (100 * sizeof(int64_t))
 #define BUFFER_ROW 500
-#define NUM_THREADS 5
+#define NUM_THREADS 10
 
 CLTable *CLTable::m_pTable = 0;
 pthread_mutex_t *CLTable::m_pMutexForCreatator = CLTable::InitializeMutex();
@@ -268,7 +268,8 @@ int CLTable::WriteRow(const int64_t *pstrMsg)
         {
             if (pthread_mutex_unlock(m_pMutexForWritingTable) != 0)
                 return -1;
-            CLTable::Flush();
+            if (m_nUsedRowsForBuffer == BUFFER_ROW)
+                CLTable::Flush();
             return 0;
         }
     }
@@ -325,11 +326,11 @@ CLTable *CLTable::GetInstance()
         return m_pTable;
     }
         
-    // if (m_pMutexForCreatator == 0)
-    //     return 0;
+    if (m_pMutexForCreatator == 0)
+        return 0;
 
 
-    pthread_mutex_lock(m_pMutexForCreatator);
+    // pthread_mutex_lock(m_pMutexForCreatator);
     std::cout << "m_pMutexForCreatator locked!" <<std::endl;
 
     if (m_pTable == 0)
@@ -394,6 +395,10 @@ void CLTable::OnProcessExit()
 
 int CLTable::SaveIndex(int attribute)
 {
+    if(attribute<0 ||attribute>99){
+        std::cout<<"There is no attribute "<<attribute<<std::endl;
+        return 0;
+    }
     std::string s = "Index" + std::to_string(attribute);
     int fd = open(s.data(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
     if(lseek(fd,0,SEEK_END)/sizeof(int64_t) == m_nReaderRows*ROW_LENGTH){
@@ -447,13 +452,16 @@ int CLTable::ReadIndex(int attribute)
 //insert -> search -> saveindex 
 void * InsertSearchIndex(void* args){
     std::default_random_engine generator(time(NULL));
-    std::uniform_int_distribution<int> dis(0, 12);
+    std::uniform_int_distribution<int> dis(0, 100000000);
     auto dice = std::bind(dis, generator);
 
+    std::default_random_engine generator2(time(NULL));
+    std::uniform_int_distribution<int> dis2(0, 99);
+    auto dice2 = std::bind(dis2, generator2);
 
     CLTable *pTable = CLTable::GetInstance();
 
-    for (int64_t i = 0; i <10; i++)
+    for (int64_t i = 0; i <1000; i++)
     {
         int64_t tmp[100];
         for (int i = 0; i < 100; i++)
@@ -463,11 +471,11 @@ void * InsertSearchIndex(void* args){
         std::cout << "Writing table"<< std::endl;
         pTable->WriteRowMsg(tmp);
     }
-    for(int i= 0;i<10;i++){
+    for(int i= 0;i<5;i++){
         int64_t a = abs(dice());
         std::cout << "a = " << a << std::endl;
         std::cout << "Searching table" << std::endl;
-        int64_t **res = pTable->SearchFromTable(67, 1, a);
+        int64_t **res = pTable->SearchFromTable(dice2(), 1, a);
         for (int i = 0; i < 10; i++)
         {
             if (res == 0 || res[i] == 0)
@@ -476,13 +484,30 @@ void * InsertSearchIndex(void* args){
                 break;
             }
             std::cout << "res[" << i << "][0] =  " << res[i][0]  << "      "
-                      << "res[" << i << "][0] =  " << res[i][50] << "      "
-                      << "res[" << i << "][0] =  " << res[i][99] << std::endl;
+                      << "res[" << i << "][50] =  " << res[i][50] << "      "
+                      << "res[" << i << "][99] =  " << res[i][99] << std::endl;
         }
     }
     std::cout << "Saving Index" << std::endl;
-    pTable->SaveIndex(dice()+20);
-
+    pTable->SaveIndex(dice2());
+    for (int i = 0; i < 5; i++)
+    {
+        int64_t a = abs(dice());
+        std::cout << "a = " << a << std::endl;
+        std::cout << "Searching table" << std::endl;
+        int64_t **res = pTable->SearchFromTable(dice2(), 1, a);
+        for (int i = 0; i < 10; i++)
+        {
+            if (res == 0 || res[i] == 0)
+            {
+                std::cout << "There are(is) " << i << " searched data in table!" << std::endl;
+                break;
+            }
+            std::cout << "res[" << i << "][0] =  " << res[i][0] << "      "
+                      << "res[" << i << "][50] =  " << res[i][50] << "      "
+                      << "res[" << i << "][99] =  " << res[i][99] << std::endl;
+        }
+    }
 }
 
 
@@ -504,29 +529,29 @@ int main()
         else{
             std::cout << "pthread has been created, and tid = " << tids[i] << std::endl;
         }
-        sleep(3);
+        sleep(2);
     }
     //等各个线程退出后，进程才结束，否则进程强制结束了，线程可能还没反应过来；
     pthread_exit(NULL);
-
+    return 0;
 
     // std::default_random_engine generator(time(NULL));
     // std::uniform_int_distribution<int64_t> dis(0, 18446744073709551615);
     // auto dice = std::bind(dis, generator);
     // CLTable *pTable = CLTable::GetInstance();
-    // for (int64_t i = 0; i < 10000; i++)
+    // for (int64_t i = 0; i < 8000; i++)
     // {
     //     int64_t tmp[100];
     //     for (int i = 0; i < 100; i++)
     //     {
     //         tmp[i] = abs(dice());
     //     }
-    //     // std::cout << tmp[0] <<"    "<<tmp[99] << std::endl;
+    //     if(i%100000 ==0 ) std::cout <<"This is the "<<i<<"round(s) inserting!"<< std::endl;
     //     pTable->WriteRowMsg(tmp);
     // }
     // int64_t a = abs(dice());
     // std::cout << "a = " << a << std::endl;
-    // int64_t **res = pTable->SearchFromTable(50, 1, a + 1000000);
+    // int64_t **res = pTable->SearchFromTable(99, 1, a + 1000000);
     // for (int i = 0; i < 10; i++)
     // {
     //     if (res == 0 || res[i] == 0)
@@ -535,12 +560,27 @@ int main()
     //         break;
     //     }
     //     std::cout << "res[" << i << "][0] =  " << res[i][0]  << "      "
-    //               << "res[" << i << "][0] =  " << res[i][50] << "      "
-    //               << "res[" << i << "][0] =  " << res[i][99] << std::endl;
+    //               << "res[" << i << "][50] =  " << res[i][50] << "      "
+    //               << "res[" << i << "][99] =  " << res[i][99] << std::endl;
     // }
 
-    // pTable->SaveIndex(50);
-    return 0;
+    // pTable->SaveIndex(99);
+    // pTable->SaveIndex(100);
+    // // int64_t a1 = abs(dice());
+    // // std::cout << "a1 = " << a1 << std::endl;
+    // res = pTable->SearchFromTable(99, 1, a + 1000000);
+    // for (int i = 0; i < 10; i++)
+    // {
+    //     if (res == 0 || res[i] == 0)
+    //     {
+    //         std::cout << "There are(is) " << i << " searched data in table!" << std::endl;
+    //         break;
+    //     }
+    //     std::cout << "res[" << i << "][0] =  " << res[i][0] << "      "
+    //               << "res[" << i << "][50] =  " << res[i][50] << "      "
+    //               << "res[" << i << "][99] =  " << res[i][99] << std::endl;
+    // }
+    // return 0;
 }
 
 
