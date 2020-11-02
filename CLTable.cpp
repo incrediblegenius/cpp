@@ -387,22 +387,26 @@ void CLTable::OnProcessExit()
         std::cout << "Before close the table, there are " << pTable->m_nRows << " rows in total." << std::endl;
         std::cout << "Before close the table, there are " << lseek(pTable->m_Fd, 0, SEEK_END) / ROW_LENGTH << " rows in file." << std::endl;
     }
-    delete pTable->m_pMutexForWritingTable;
-    delete[] pTable->m_pTableBuffer;
+    // delete pTable->m_pMutexForWritingTable;
+    // delete[] pTable->m_pTableBuffer;
     close(pTable->m_Fd);
-    std::cout << "OnProcessExit() has been execute!" << std::endl;
+    // std::cout << "OnProcessExit() has been execute!" << std::endl;
 }
 
 int CLTable::SaveIndex(int attribute)
 {
+    if (pthread_mutex_lock(m_pMutexForWritingTable) != 0)
+        return -1;
     if(attribute<0 ||attribute>99){
         std::cout<<"There is no attribute "<<attribute<<std::endl;
         return 0;
     }
+
     std::string s = "Index" + std::to_string(attribute);
     int fd = open(s.data(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
     if(lseek(fd,0,SEEK_END)/sizeof(int64_t) == m_nReaderRows*ROW_LENGTH){
         close(fd);
+        pthread_mutex_unlock(m_pMutexForWritingTable);
         return 0;
     }
     int64_t *tmp = (int64_t *)malloc(sizeof(int64_t) * 2 * m_nReaderRows);
@@ -418,18 +422,22 @@ int CLTable::SaveIndex(int attribute)
     free(tmp);
     close(fd);
     // std::cout << "The map of attribute " << attribute << " has been built, and the size is " << RowsHash.size() << std::endl;
-
+    if (pthread_mutex_unlock(m_pMutexForWritingTable) != 0)
+        return -1;
     return 0;
 }
 
 int CLTable::ReadIndex(int attribute)
 {
+    
     std::string s = "Index" + std::to_string(attribute);
     if ((access(s.data(), F_OK)) == -1)
     {
         std::cout << "IndexFile is not exist!" << std::endl;
         return 0;
     }
+    if (pthread_mutex_lock(m_pMutexForWritingTable) != 0)
+        return -1;
     int fd = open(s.data(), O_RDWR | O_CREAT, S_IRUSR | S_IWUSR);
 
     int size = lseek(fd, 0, SEEK_END);
@@ -444,6 +452,8 @@ int CLTable::ReadIndex(int attribute)
     }
     close(fd);
     free(tmp);
+    if (pthread_mutex_unlock(m_pMutexForWritingTable) != 0)
+        return -1;
     return 1;
 }
 
@@ -529,7 +539,7 @@ int main()
         else{
             std::cout << "pthread has been created, and tid = " << tids[i] << std::endl;
         }
-        sleep(2);
+        // sleep(1);
     }
     //等各个线程退出后，进程才结束，否则进程强制结束了，线程可能还没反应过来；
     pthread_exit(NULL);
